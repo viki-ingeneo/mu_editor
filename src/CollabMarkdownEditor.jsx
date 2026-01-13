@@ -5,50 +5,9 @@ import { EditorView, basicSetup } from "codemirror";
 import { EditorState } from "@codemirror/state";
 import { markdown } from "@codemirror/lang-markdown";
 import { yCollab } from "y-codemirror.next";
-
-const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:1234";
-const API_BASE = import.meta.env.VITE_DOCS_API_BASE || "http://localhost:5050";
-const TOKEN = import.meta.env.VITE_DOCS_TOKEN || "super-secret-token";
-
-// ---- Backend helpers ----
-async function loadDoc(docPath) {
-  const url = new URL(`${API_BASE}/api/doc`);
-  url.searchParams.set("path", docPath);
-
-  const res = await fetch(url.toString(), {
-    headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
-  });
-
-  console.log("loadDoc", res.status, docPath);
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`Load failed: ${res.status} ${res.statusText}`);
-  return res.json(); // { path, content }
-}
-
-async function saveDoc(docPath, content) {
-  const res = await fetch(`${API_BASE}/api/doc`, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-      ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
-    },
-    body: JSON.stringify({ path: docPath, content }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Publish failed: ${res.status} ${res.statusText} ${text}`);
-  }
-  return res.json().catch(() => ({ ok: true }));
-}
-
-// Small default template if doc not found
-function defaultTemplateFor(docPath) {
-  if (docPath === "intro.md") {
-    return `---\nid: intro\ntitle: Introduction\nsidebar_position: 1\n---\n\n# Introduction\nWelcome!\n`;
-  }
-  return `# ${docPath}\n`;
-}
+import { WS_URL } from "./config/docsConfig.js";
+import { defaultTemplateForPath } from "./domain/documents.js";
+import { loadDoc, saveDoc } from "./services/docsApi.js";
 
 export default function CollabMarkdownEditor({ roomName, docPath, userName, handlePreviewUpdate }) {
   const hostRef = useRef(null);
@@ -90,7 +49,7 @@ export default function CollabMarkdownEditor({ roomName, docPath, userName, hand
       setWsStatus("connecting");
 
       const ydoc = new Y.Doc();
-      const provider = new WebsocketProvider(`ws://localhost:1234/${roomName}`, roomName, ydoc);
+      const provider = new WebsocketProvider(`${WS_URL}/${roomName}`, roomName, ydoc);
 
       provider.on("status", (e) => {
         if (!destroyed) setWsStatus(e.status); // connected/disconnected
@@ -112,7 +71,7 @@ export default function CollabMarkdownEditor({ roomName, docPath, userName, hand
 
         try {
           const existing = await loadDoc(docPath);
-          const content = existing?.content ?? defaultTemplateFor(docPath);
+          const content = existing?.content ?? defaultTemplateForPath(docPath);
 
           ydoc.transact(() => {
             ytext.insert(0, content);
@@ -178,7 +137,7 @@ export default function CollabMarkdownEditor({ roomName, docPath, userName, hand
       if (!ytext || !ydoc) throw new Error("Editor not ready");
 
       const existing = await loadDoc(docPath);
-      const content = existing?.content ?? defaultTemplateFor(docPath);
+      const content = existing?.content ?? defaultTemplateForPath(docPath);
 
       // Replace shared content (this impacts all collaborators in room)
       ydoc.transact(() => {
@@ -193,8 +152,9 @@ export default function CollabMarkdownEditor({ roomName, docPath, userName, hand
   }
 
   const onPreview = () => {
-    handlePreviewUpdate(ytextRef.current.toString());
-  }
+    const content = ytextRef.current ? ytextRef.current.toString() : "";
+    handlePreviewUpdate(content);
+  };
 
   return (
     <div>
